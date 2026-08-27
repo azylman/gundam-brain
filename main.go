@@ -115,7 +115,10 @@ func handlePrompt(agyBin, apiKey string) http.HandlerFunc {
 			log.Printf("Starting background execution for prompt: %q", prompt)
 			ensureAgySettings(apiKey)
 
-			cmd := exec.Command(agyBin, "--dangerously-skip-permissions", "-p", prompt)
+			logFile := "/tmp/agy.log"
+			_ = os.Remove(logFile)
+
+			cmd := exec.Command(agyBin, "--dangerously-skip-permissions", "--log-file", logFile, "-p", prompt)
 			cmd.Stdin = strings.NewReader("")
 			if apiKey != "" {
 				cmd.Env = append(os.Environ(),
@@ -140,8 +143,13 @@ func handlePrompt(agyBin, apiKey string) http.HandlerFunc {
 				}
 			}
 
-			log.Printf("Execution finished | exit_code=%d\n--- STDOUT ---\n%s\n--- STDERR ---\n%s",
-				exitCode, stdout.String(), stderr.String())
+			logDetails := ""
+			if logData, err := os.ReadFile(logFile); err == nil && len(logData) > 0 {
+				logDetails = fmt.Sprintf("\n--- LOG FILE (%s) ---\n%s", logFile, string(logData))
+			}
+
+			log.Printf("Execution finished | exit_code=%d\n--- STDOUT ---\n%s\n--- STDERR ---\n%s%s",
+				exitCode, stdout.String(), stderr.String(), logDetails)
 		}(req.Prompt)
 
 		w.Header().Set("Content-Type", "application/json")

@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.1.5
+- Capture and log `--log-file /tmp/agy.log` for troubleshooting agent executions.
+
 ## 1.1.4
 - Default model to `gemini-2.5-flash` when configuring Gemini API provider in `settings.json`.
 
