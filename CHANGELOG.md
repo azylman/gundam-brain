@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.1.6
+- Add `model` option (default `gemini-2.5-flash`) passed to `--model` flag and `settings.json`.
+- Set only `GEMINI_API_KEY` to avoid multi-key collision warnings.
+
 ## 1.1.5
 - Capture and log `--log-file /tmp/agy.log` for troubleshooting agent executions.
 

@@ -21,6 +21,7 @@ type Options struct {
 	Port   int    `json:"port"`
 	AgyBin string `json:"agy_bin"`
 	ApiKey string `json:"api_key"`
+	Model  string `json:"model"`
 }
 
 func getEnv(key, defaultVal string) string {
@@ -30,7 +31,7 @@ func getEnv(key, defaultVal string) string {
 	return defaultVal
 }
 
-func ensureAgySettings(apiKey string) {
+func ensureAgySettings(apiKey, model string) {
 	if apiKey == "" {
 		return
 	}
@@ -44,13 +45,13 @@ func ensureAgySettings(apiKey string) {
 	settingsPath := filepath.Join(configDir, "settings.json")
 	settings := map[string]interface{}{
 		"modelProvider": "gemini",
-		"model":         "gemini-2.5-flash",
+		"model":         model,
 	}
 	if data, err := os.ReadFile(settingsPath); err == nil {
 		_ = json.Unmarshal(data, &settings)
 		settings["modelProvider"] = "gemini"
-		if _, ok := settings["model"]; !ok {
-			settings["model"] = "gemini-2.5-flash"
+		if model != "" {
+			settings["model"] = model
 		}
 	}
 	if out, err := json.MarshalIndent(settings, "", "  "); err == nil {
@@ -58,10 +59,11 @@ func ensureAgySettings(apiKey string) {
 	}
 }
 
-func loadConfig() (string, string, string) {
+func loadConfig() (string, string, string, string) {
 	port := getEnv("PORT", "8080")
 	agyBin := getEnv("AGY_BIN", "agy")
 	apiKey := getEnv("GEMINI_API_KEY", getEnv("ANTIGRAVITY_API_KEY", ""))
+	model := getEnv("AGY_MODEL", "gemini-2.5-flash")
 
 	// Read Home Assistant add-on options if available
 	if data, err := os.ReadFile("/data/options.json"); err == nil {
@@ -76,17 +78,20 @@ func loadConfig() (string, string, string) {
 			if strings.TrimSpace(opts.ApiKey) != "" {
 				apiKey = opts.ApiKey
 			}
+			if strings.TrimSpace(opts.Model) != "" {
+				model = opts.Model
+			}
 		}
 	}
 
 	if apiKey != "" {
-		ensureAgySettings(apiKey)
+		ensureAgySettings(apiKey, model)
 	}
 
-	return port, agyBin, apiKey
+	return port, agyBin, apiKey, model
 }
 
-func handlePrompt(agyBin, apiKey string) http.HandlerFunc {
+func handlePrompt(agyBin, apiKey, model string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, `{"error":"Method not allowed"}`, http.StatusMethodNotAllowed)
@@ -113,18 +118,22 @@ func handlePrompt(agyBin, apiKey string) http.HandlerFunc {
 		// Spawn headless Antigravity CLI in a background goroutine
 		go func(prompt string) {
 			log.Printf("Starting background execution for prompt: %q", prompt)
-			ensureAgySettings(apiKey)
+			ensureAgySettings(apiKey, model)
 
 			logFile := "/tmp/agy.log"
 			_ = os.Remove(logFile)
 
-			cmd := exec.Command(agyBin, "--dangerously-skip-permissions", "--log-file", logFile, "-p", prompt)
+			args := []string{"--dangerously-skip-permissions"}
+			if model != "" {
+				args = append(args, "--model", model)
+			}
+			args = append(args, "--log-file", logFile, "-p", prompt)
+
+			cmd := exec.Command(agyBin, args...)
 			cmd.Stdin = strings.NewReader("")
 			if apiKey != "" {
 				cmd.Env = append(os.Environ(),
 					"GEMINI_API_KEY="+apiKey,
-					"ANTIGRAVITY_API_KEY="+apiKey,
-					"GOOGLE_API_KEY="+apiKey,
 				)
 			}
 
@@ -168,10 +177,10 @@ func handleHealth(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
-	port, agyBin, apiKey := loadConfig()
+	port, agyBin, apiKey, model := loadConfig()
 
 	mux := http.NewServeMux()
-	promptHandler := handlePrompt(agyBin, apiKey)
+	promptHandler := handlePrompt(agyBin, apiKey, model)
 
 	mux.HandleFunc("POST /", promptHandler)
 	mux.HandleFunc("POST /prompt", promptHandler)
@@ -184,7 +193,7 @@ func main() {
 	if apiKey != "" {
 		authStatus = "Gemini API key configured"
 	}
-	log.Printf("Gundam Brain server listening on %s (agy binary: %s, auth: %s)", addr, agyBin, authStatus)
+	log.Printf("Gundam Brain server listening on %s (agy binary: %s, model: %s, auth: %s)", addr, agyBin, model, authStatus)
 	if err := http.ListenAndServe(addr, mux); err != nil {
 		log.Fatalf("Server error: %v", err)
 	}
