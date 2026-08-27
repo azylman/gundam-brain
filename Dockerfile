@@ -1,15 +1,14 @@
-ARG BUILD_FROM=ubuntu:24.04
-FROM golang:1.22 AS builder
+FROM golang:1.22-alpine AS builder
 
 WORKDIR /build
 COPY go.mod ./
 COPY main.go ./
 RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o gundam-brain .
 
-FROM $BUILD_FROM
+FROM ubuntu:24.04
 
 ENV DEBIAN_FRONTEND=noninteractive
-ENV PATH="/root/.local/bin:/usr/local/bin:${PATH}"
+ENV PATH="/usr/local/bin:${PATH}"
 
 # Install system dependencies
 RUN apt-get update && \
@@ -18,15 +17,14 @@ RUN apt-get update && \
         curl \
         bash \
         git \
-        jq && \
+        jq \
+        tar \
+        gzip && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
-# Install Antigravity CLI (agy)
-RUN curl -fsSL https://antigravity.google/cli/install.sh | bash || true
-
-# Ensure binary is in standard path
-RUN if [ -f /root/.local/bin/agy ]; then ln -sf /root/.local/bin/agy /usr/local/bin/agy; fi
+# Install Antigravity CLI (agy) directly into /usr/local/bin
+RUN curl -fsSL https://antigravity.google/cli/install.sh | bash -s -- -d /usr/local/bin
 
 WORKDIR /app
 COPY --from=builder /build/gundam-brain /app/gundam-brain
