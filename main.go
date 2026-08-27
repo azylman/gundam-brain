@@ -69,6 +69,9 @@ func ensureAgySettings(apiKey, model string) {
 }
 
 func ensureSystemRules(customPrompt string) {
+	if strings.TrimSpace(customPrompt) == "" {
+		return
+	}
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		homeDir = "/root"
@@ -76,28 +79,10 @@ func ensureSystemRules(customPrompt string) {
 	rulesDir := filepath.Join(homeDir, ".gemini", "rules")
 	_ = os.MkdirAll(rulesDir, 0755)
 
-	defaultRules := `# Core Agent Guidelines
-
-## 1. Tool-First Execution
-Always inspect your available tools (such as Home Assistant MCP, GitHub MCP, Discord MCP, etc.) before responding.
-When a user asks you to check status, modify configuration, change code, create pull requests, update settings, or interact with external services, ALWAYS invoke the appropriate tools to perform the concrete action rather than just conversationally acknowledging it.
-
-## 2. Action Grounding
-Never claim an action has been done or will be done without making the corresponding tool call.
-
-## 3. Communication & Reporting
-When responding to messages from external platforms (such as Discord), execute all necessary tools to fulfill the requested task first, then use the platform's communication tool (e.g. Discord send_message or thread reply) to report the outcome and actions taken back to the user.
-`
-	if strings.TrimSpace(customPrompt) != "" {
-		defaultRules += "\n## Additional Instructions\n" + strings.TrimSpace(customPrompt) + "\n"
-	}
-
-	ruleFile := filepath.Join(rulesDir, "agent_core.md")
-	_ = os.WriteFile(ruleFile, []byte(defaultRules), 0644)
-
-	// Also write to /app/GEMINI.md
-	_ = os.WriteFile("/app/GEMINI.md", []byte(defaultRules), 0644)
-	log.Printf("Configured agent system rules in %s and /app/GEMINI.md", ruleFile)
+	overrideContent := "# User Custom Instructions\n" + strings.TrimSpace(customPrompt) + "\n"
+	ruleFile := filepath.Join(rulesDir, "user_override.md")
+	_ = os.WriteFile(ruleFile, []byte(overrideContent), 0644)
+	log.Printf("Configured custom user rules in %s", ruleFile)
 }
 
 func ensureMcpConfig(rawConfig json.RawMessage) {

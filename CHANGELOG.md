@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.3.7
+- Committed `GEMINI.md` directly into the repository with full system architecture, component topology, invariants, and operational workflows.
+- Copied `GEMINI.md` to `/app/GEMINI.md` in Dockerfile so Antigravity CLI natively discovers it on every session.
+- Simplified `main.go` to avoid hardcoding markdown rule strings.
+
 ## 1.3.6
 - Support `conversation_id` in `POST /api/prompt` payload; if not provided, generates a UUIDv4 using `github.com/google/uuid`.
 - Pass `--conversation-id` explicitly to `agy` CLI for deterministic conversation scoping and session tracking.

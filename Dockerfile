@@ -3,7 +3,7 @@ FROM golang:1.22-alpine AS builder
 
 WORKDIR /build
 
-COPY go.mod ./
+COPY go.mod go.sum ./
 COPY main.go ./
 RUN go mod tidy
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /gundam-brain .
@@ -28,6 +28,7 @@ RUN curl -fsSL https://antigravity.google/cli/install.sh | bash -s -- -d /usr/lo
 WORKDIR /app
 
 COPY --from=builder /gundam-brain /usr/local/bin/gundam-brain
+COPY GEMINI.md /app/GEMINI.md
 
 EXPOSE 8080
 
