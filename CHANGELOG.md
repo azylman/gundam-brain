@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.3.4
+- Added configurable `timeout_minutes` option with a default of 15 minutes for long-running agent tasks and multi-turn MCP operations.
+
 ## 1.3.3
 - Added `AGENTS.md` repository guidelines defining zero in-image MCP invariant, remote endpoint architecture, and secret isolation.
 - Simplified `main.go` process execution to standard `context.WithTimeout` without `setpgid`.

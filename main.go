@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -21,12 +22,13 @@ type PromptRequest struct {
 }
 
 type Options struct {
-	Port         int             `json:"port"`
-	AgyBin       string          `json:"agy_bin"`
-	ApiKey       string          `json:"api_key"`
-	Model        string          `json:"model"`
-	SystemPrompt string          `json:"system_prompt"`
-	McpConfig    json.RawMessage `json:"mcp_config"`
+	Port           int             `json:"port"`
+	AgyBin         string          `json:"agy_bin"`
+	ApiKey         string          `json:"api_key"`
+	Model          string          `json:"model"`
+	SystemPrompt   string          `json:"system_prompt"`
+	TimeoutMinutes int             `json:"timeout_minutes"`
+	McpConfig      json.RawMessage `json:"mcp_config"`
 }
 
 func getEnv(key, defaultVal string) string {
@@ -209,12 +211,18 @@ func extractResponse(stderrStr string) string {
 	return ""
 }
 
-func loadConfig() (string, string, string, string, string, json.RawMessage) {
+func loadConfig() (string, string, string, string, string, int, json.RawMessage) {
 	port := getEnv("PORT", "8080")
 	agyBin := getEnv("AGY_BIN", "agy")
 	apiKey := getEnv("GEMINI_API_KEY", getEnv("ANTIGRAVITY_API_KEY", ""))
 	model := getEnv("AGY_MODEL", "Gemini 3.7 Flash (High)")
 	systemPrompt := getEnv("SYSTEM_PROMPT", "")
+	timeoutMinutes := 15
+	if tm := os.Getenv("TIMEOUT_MINUTES"); tm != "" {
+		if val, err := strconv.Atoi(tm); err == nil && val > 0 {
+			timeoutMinutes = val
+		}
+	}
 	var mcpConfig json.RawMessage
 
 	// Read Home Assistant add-on options if available
@@ -236,6 +244,9 @@ func loadConfig() (string, string, string, string, string, json.RawMessage) {
 			if strings.TrimSpace(opts.SystemPrompt) != "" {
 				systemPrompt = opts.SystemPrompt
 			}
+			if opts.TimeoutMinutes > 0 {
+				timeoutMinutes = opts.TimeoutMinutes
+			}
 			if len(opts.McpConfig) > 0 {
 				mcpConfig = opts.McpConfig
 			}
@@ -250,10 +261,10 @@ func loadConfig() (string, string, string, string, string, json.RawMessage) {
 		ensureMcpConfig(mcpConfig)
 	}
 
-	return port, agyBin, apiKey, model, systemPrompt, mcpConfig
+	return port, agyBin, apiKey, model, systemPrompt, timeoutMinutes, mcpConfig
 }
 
-func handlePrompt(agyBin, apiKey, model, systemPrompt string, mcpConfig json.RawMessage) http.HandlerFunc {
+func handlePrompt(agyBin, apiKey, model, systemPrompt string, timeoutMinutes int, mcpConfig json.RawMessage) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, `{"error":"Method not allowed"}`, http.StatusMethodNotAllowed)
@@ -279,7 +290,7 @@ func handlePrompt(agyBin, apiKey, model, systemPrompt string, mcpConfig json.Raw
 
 		// Spawn headless Antigravity CLI in a background goroutine with bounded execution timeout
 		go func(prompt string) {
-			log.Printf("Starting background execution for prompt: %q", prompt)
+			log.Printf("Starting background execution for prompt: %q (timeout: %d minutes)", prompt, timeoutMinutes)
 			ensureAgySettings(apiKey, model)
 			ensureSystemRules(systemPrompt)
 			if len(mcpConfig) > 0 {
@@ -289,7 +300,7 @@ func handlePrompt(agyBin, apiKey, model, systemPrompt string, mcpConfig json.Raw
 			logFile := "/tmp/agy.log"
 			_ = os.Remove(logFile)
 
-			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+			ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutMinutes)*time.Minute)
 			defer cancel()
 
 			args := []string{"--dangerously-skip-permissions"}
@@ -354,10 +365,10 @@ func handleHealth(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
-	port, agyBin, apiKey, model, systemPrompt, mcpConfig := loadConfig()
+	port, agyBin, apiKey, model, systemPrompt, timeoutMinutes, mcpConfig := loadConfig()
 
 	mux := http.NewServeMux()
-	promptHandler := handlePrompt(agyBin, apiKey, model, systemPrompt, mcpConfig)
+	promptHandler := handlePrompt(agyBin, apiKey, model, systemPrompt, timeoutMinutes, mcpConfig)
 
 	mux.HandleFunc("POST /", promptHandler)
 	mux.HandleFunc("POST /prompt", promptHandler)
@@ -374,8 +385,8 @@ func main() {
 	if len(mcpConfig) > 0 {
 		mcpStatus = "custom MCP config loaded"
 	}
-	log.Printf("Gundam Brain server listening on %s (agy binary: %s, model: %s, auth: %s, mcp: %s)",
-		addr, agyBin, model, authStatus, mcpStatus)
+	log.Printf("Gundam Brain server listening on %s (agy binary: %s, model: %s, timeout: %dm, auth: %s, mcp: %s)",
+		addr, agyBin, model, timeoutMinutes, authStatus, mcpStatus)
 	if err := http.ListenAndServe(addr, mux); err != nil {
 		log.Fatalf("Server error: %v", err)
 	}
