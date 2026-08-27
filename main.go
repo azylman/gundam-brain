@@ -19,6 +19,7 @@ type PromptRequest struct {
 type Options struct {
 	Port   int    `json:"port"`
 	AgyBin string `json:"agy_bin"`
+	ApiKey string `json:"api_key"`
 }
 
 func getEnv(key, defaultVal string) string {
@@ -28,9 +29,10 @@ func getEnv(key, defaultVal string) string {
 	return defaultVal
 }
 
-func loadConfig() (string, string) {
+func loadConfig() (string, string, string) {
 	port := getEnv("PORT", "8080")
 	agyBin := getEnv("AGY_BIN", "agy")
+	apiKey := getEnv("GEMINI_API_KEY", getEnv("ANTIGRAVITY_API_KEY", ""))
 
 	// Read Home Assistant add-on options if available
 	if data, err := os.ReadFile("/data/options.json"); err == nil {
@@ -42,13 +44,16 @@ func loadConfig() (string, string) {
 			if strings.TrimSpace(opts.AgyBin) != "" {
 				agyBin = opts.AgyBin
 			}
+			if strings.TrimSpace(opts.ApiKey) != "" {
+				apiKey = opts.ApiKey
+			}
 		}
 	}
 
-	return port, agyBin
+	return port, agyBin, apiKey
 }
 
-func handlePrompt(agyBin string) http.HandlerFunc {
+func handlePrompt(agyBin, apiKey string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, `{"error":"Method not allowed"}`, http.StatusMethodNotAllowed)
@@ -76,6 +81,14 @@ func handlePrompt(agyBin string) http.HandlerFunc {
 		go func(prompt string) {
 			log.Printf("Starting background execution for prompt: %q", prompt)
 			cmd := exec.Command(agyBin, "--dangerously-skip-permissions", "-p", prompt)
+			cmd.Stdin = strings.NewReader("")
+			if apiKey != "" {
+				cmd.Env = append(os.Environ(),
+					"GEMINI_API_KEY="+apiKey,
+					"ANTIGRAVITY_API_KEY="+apiKey,
+				)
+			}
+
 			var stdout, stderr bytes.Buffer
 			cmd.Stdout = &stdout
 			cmd.Stderr = &stderr
@@ -111,10 +124,10 @@ func handleHealth(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
-	port, agyBin := loadConfig()
+	port, agyBin, apiKey := loadConfig()
 
 	mux := http.NewServeMux()
-	promptHandler := handlePrompt(agyBin)
+	promptHandler := handlePrompt(agyBin, apiKey)
 
 	mux.HandleFunc("POST /", promptHandler)
 	mux.HandleFunc("POST /prompt", promptHandler)

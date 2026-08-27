@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.1.2
+- Support optional `api_key` in Home Assistant add-on options (`GEMINI_API_KEY` / `ANTIGRAVITY_API_KEY`).
+- Provide non-blocking empty stdin to background `agy` process to prevent terminal hangs.
+
 ## 1.1.1
 - Explicit Ubuntu 24.04 runtime base.
 - Direct Antigravity CLI (`agy`) binary installation via official bootstrapper script into `/usr/local/bin`.
