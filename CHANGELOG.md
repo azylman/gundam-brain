@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.3.3
+- Added `AGENTS.md` repository guidelines defining zero in-image MCP invariant, remote endpoint architecture, and secret isolation.
+- Simplified `main.go` process execution to standard `context.WithTimeout` without `setpgid`.
+
 ## 1.3.2
 - Removed local MCP package preinstallations from Dockerfile; all MCP servers now operate as remote network endpoints.
 

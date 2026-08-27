@@ -13,7 +13,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
-	"syscall"
 	"time"
 )
 
@@ -301,7 +300,6 @@ func handlePrompt(agyBin, apiKey, model, systemPrompt string, mcpConfig json.Raw
 
 			cmd := exec.CommandContext(ctx, agyBin, args...)
 			cmd.Dir = "/app"
-			cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 			cmd.Stdin = strings.NewReader("")
 			if apiKey != "" {
 				cmd.Env = append(os.Environ(),
@@ -320,13 +318,8 @@ func handlePrompt(agyBin, apiKey, model, systemPrompt string, mcpConfig json.Raw
 					exitCode = exitErr.ExitCode()
 				} else {
 					exitCode = -1
-					log.Printf("Process terminated: %v", err)
+					log.Printf("Process error: %v", err)
 				}
-			}
-
-			// Clean up any leaked child process groups on finish
-			if cmd.Process != nil {
-				_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 			}
 
 			outText := strings.TrimSpace(stdout.String())
