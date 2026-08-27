@@ -266,8 +266,13 @@ func handlePrompt(agyBin, apiKey, model string, mcpConfig json.RawMessage) http.
 				}
 			}
 
-			log.Printf("Execution finished | exit_code=%d\n--- STDOUT / RESPONSE ---\n%s\n--- STDERR ---\n%s",
-				exitCode, outText, stderr.String())
+			logDetails := ""
+			if logData, err := os.ReadFile(logFile); err == nil && len(logData) > 0 {
+				logDetails = fmt.Sprintf("\n--- LOG FILE (%s) ---\n%s", logFile, string(logData))
+			}
+
+			log.Printf("Execution finished | exit_code=%d\n--- STDOUT / RESPONSE ---\n%s\n--- STDERR ---\n%s%s",
+				exitCode, outText, stderr.String(), logDetails)
 		}(req.Prompt)
 
 		w.Header().Set("Content-Type", "application/json")

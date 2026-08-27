@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.2.1
+- Log detailed `/tmp/agy.log` file on error to diagnose MCP server startup or agent execution errors.
+
 ## 1.2.0
 - Added `mcp_config` option supporting arbitrary Model Context Protocol (MCP) server definitions.
 - Automatically writes `/root/.gemini/config/mcp_config.json` on startup and execution.
