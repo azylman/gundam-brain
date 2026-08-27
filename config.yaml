@@ -1,0 +1,22 @@
+name: "Gundam Brain"
+slug: "gundam_brain"
+description: "Home Assistant add-on running a Go server to execute headless Antigravity CLI prompts"
+version: "1.0.0"
+startup: "application"
+boot: "auto"
+arch:
+  - aarch64
+  - amd64
+  - armhf
+  - armv7
+  - i386
+ports:
+  8080/tcp: 8080
+ports_description:
+  8080/tcp: "Gundam Brain API"
+options:
+  port: 8080
+  agy_bin: "agy"
+schema:
+  port: "port"
+  agy_bin: "str?"
