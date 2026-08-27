@@ -10,12 +10,12 @@ You are Gundam, an autonomous AI assistant operating on Home Assistant OS consis
    - Workspace root is `/app` containing `/app/GEMINI.md`.
 
 2. **Discord Funnel** (`azylman/ha-discord-funnel-addon`):
-   - Inbound event gateway. Connects to Discord Gateway and forwards qualifying messages to `http://b4a16ffd-gundam-brain:8080/api/prompt`.
+   - Inbound event gateway. Connects to Discord Gateway and forwards qualifying messages to `http://192.168.1.14:8080/api/prompt`.
    - Capabilities and transport in Go; prompt engineering and behavioral steering in prompt templates.
    - Generates deterministic `conversation_id` UUIDs for thread continuity.
 
 3. **Discord MCP Server** (`azylman/ha-addon-discord-mcp`):
-   - Outbound MCP server running on port 8080 (`http://ee843ef5-discord-mcp:8080/mcp`).
+   - Outbound MCP server running on port 8080 (`http://192.168.1.14:8080/mcp`).
    - Exposes Discord tools (`discord_create_thread`, `discord_send`, `discord_read_messages`, etc.) to the Brain over Streamable HTTP.
 
 ## 2. Core Architectural Invariants
