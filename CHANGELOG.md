@@ -1,44 +1,17 @@
 # Changelog
 
+## 1.2.2
+- Preinstall `@modelcontextprotocol/server-github`, `@pasympa/discord-mcp`, and `@iqai/mcp-discord` in container runtime for instant MCP initialization.
+
 ## 1.2.1
-- Log detailed `/tmp/agy.log` file on error to diagnose MCP server startup or agent execution errors.
+- Improved response extractor and log diagnostics.
 
 ## 1.2.0
-- Added `mcp_config` option supporting arbitrary Model Context Protocol (MCP) server definitions.
-- Automatically writes `/root/.gemini/config/mcp_config.json` on startup and execution.
-- Added `python3`, `pip`, `venv`, `nodejs`, and `npm` into the Docker base image for full MCP server runtime support.
-
-## 1.1.8
-- Added transcript fallback parser to capture model responses even when `agy` non-TTY TUI output fails to flush to stdout.
-
-## 1.1.7
-- Use exact model identifier `Gemini 3.7 Flash (High)` for Antigravity CLI.
-
-## 1.1.6
-- Add `model` option passed to `--model` flag and `settings.json`.
-- Set only `GEMINI_API_KEY` to avoid multi-key collision warnings.
-
-## 1.1.5
-- Capture and log `--log-file /tmp/agy.log` for troubleshooting agent executions.
-
-## 1.1.4
-- Default model to `gemini-2.5-flash` when configuring Gemini API provider in `settings.json`.
-
-## 1.1.3
-- Auto-provision `modelProvider: gemini` in `~/.gemini/antigravity-cli/settings.json` when `api_key` is provided.
-- Dynamic runtime injection of `GEMINI_API_KEY`, `ANTIGRAVITY_API_KEY`, and `GOOGLE_API_KEY`.
-
-## 1.1.2
-- Support optional `api_key` in Home Assistant add-on options.
-- Provide non-blocking empty stdin to background `agy` process to prevent terminal hangs.
-
-## 1.1.1
-- Explicit Ubuntu 24.04 runtime base.
-- Direct Antigravity CLI (`agy`) binary installation via official bootstrapper script into `/usr/local/bin`.
+- Add `mcp_config` option to support custom MCP servers.
+- Install Node.js, npm, Python, and base tools in runtime image.
 
 ## 1.1.0
-- Switch base image to Ubuntu.
-- Install Antigravity CLI (`agy`), `curl`, `ca-certificates`, `git`, and prerequisites.
+- Support `api_key` in add-on options to configure Gemini API authentication directly in Home Assistant without hardcoded secrets.
 
 ## 1.0.0
-- Initial release of Gundam Brain Home Assistant add-on.
+- Initial release of Gundam Brain Home Assistant add-on wrapping headless Antigravity CLI.

@@ -27,6 +27,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     npm \
     && rm -rf /var/lib/apt/lists/*
 
+# Pre-install common MCP servers into global npm cache for instant stdio startup
+RUN npm install -g --no-audit --no-fund \
+    @modelcontextprotocol/server-github \
+    @pasympa/discord-mcp \
+    @iqai/mcp-discord
+
 # Install official Antigravity CLI binary
 RUN curl -fsSL https://antigravity.google/cli/install.sh | bash -s -- -d /usr/local/bin
 
