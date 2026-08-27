@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -11,11 +12,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
+	_ "modernc.org/sqlite"
 )
 
 type PromptRequest struct {
@@ -38,6 +41,118 @@ func getEnv(key, defaultVal string) string {
 		return val
 	}
 	return defaultVal
+}
+
+func getDBPath() string {
+	if _, err := os.Stat("/data"); err == nil {
+		return "/data/gundam.db"
+	}
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return "./gundam.db"
+	}
+	return filepath.Join(homeDir, ".gemini", "gundam.db")
+}
+
+func initDB(dbPath string) (*sql.DB, error) {
+	_ = os.MkdirAll(filepath.Dir(dbPath), 0755)
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		return nil, err
+	}
+	schema := `
+	CREATE TABLE IF NOT EXISTS conversations (
+		external_id TEXT PRIMARY KEY,
+		internal_id TEXT NOT NULL,
+		created_at DATETIME NOT NULL,
+		updated_at DATETIME NOT NULL
+	);
+	CREATE INDEX IF NOT EXISTS idx_conversations_internal_id ON conversations(internal_id);
+	`
+	if _, err := db.Exec(schema); err != nil {
+		return nil, err
+	}
+	log.Printf("SQLite conversation database initialized at %s", dbPath)
+	return db, nil
+}
+
+func getInternalConversationID(db *sql.DB, externalID string) (string, error) {
+	if db == nil || externalID == "" {
+		return "", nil
+	}
+	var internalID string
+	err := db.QueryRow("SELECT internal_id FROM conversations WHERE external_id = ?", externalID).Scan(&internalID)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	return internalID, err
+}
+
+func getExternalConversationID(db *sql.DB, internalID string) (string, error) {
+	if db == nil || internalID == "" {
+		return "", nil
+	}
+	var externalID string
+	err := db.QueryRow("SELECT external_id FROM conversations WHERE internal_id = ?", internalID).Scan(&externalID)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	return externalID, err
+}
+
+func saveConversationMapping(db *sql.DB, externalID, internalID string) error {
+	if db == nil || externalID == "" || internalID == "" {
+		return nil
+	}
+	now := time.Now().UTC()
+	query := `
+	INSERT INTO conversations (external_id, internal_id, created_at, updated_at)
+	VALUES (?, ?, ?, ?)
+	ON CONFLICT(external_id) DO UPDATE SET
+		internal_id = excluded.internal_id,
+		updated_at = excluded.updated_at
+	`
+	_, err := db.Exec(query, externalID, internalID, now, now)
+	if err != nil {
+		log.Printf("Failed to save conversation mapping (%s -> %s): %v", externalID, internalID, err)
+	} else {
+		log.Printf("Saved conversation mapping: %s -> %s", externalID, internalID)
+	}
+	return err
+}
+
+func findLatestSessionDir(after time.Time) string {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		homeDir = "/root"
+	}
+	roots := []string{
+		"/data/brain",
+		filepath.Join(homeDir, ".gemini", "antigravity-cli", "brain"),
+		filepath.Join(homeDir, ".gemini", "antigravity", "brain"),
+	}
+	var newestID string
+	var newestTime time.Time
+	for _, root := range roots {
+		entries, err := os.ReadDir(root)
+		if err != nil {
+			continue
+		}
+		for _, entry := range entries {
+			if !entry.IsDir() {
+				continue
+			}
+			info, err := entry.Info()
+			if err != nil {
+				continue
+			}
+			if info.ModTime().After(after) && info.ModTime().After(newestTime) {
+				newestTime = info.ModTime()
+				newestID = entry.Name()
+			}
+		}
+	}
+	return newestID
 }
 
 func ensureAgySettings(apiKey, model string) {
@@ -215,7 +330,7 @@ func loadConfig() (string, string, string, string, string, int, json.RawMessage)
 	port := getEnv("PORT", "8080")
 	agyBin := getEnv("AGY_BIN", "agy")
 	apiKey := getEnv("GEMINI_API_KEY", getEnv("ANTIGRAVITY_API_KEY", ""))
-	model := getEnv("AGY_MODEL", "Gemini 3.7 Flash (High)")
+	model := getEnv("AGY_MODEL", "Gemini 3.6 Flash (Low)")
 	systemPrompt := getEnv("SYSTEM_PROMPT", "")
 	timeoutMinutes := 15
 	if tm := os.Getenv("TIMEOUT_MINUTES"); tm != "" {
@@ -278,7 +393,7 @@ func loadConfig() (string, string, string, string, string, int, json.RawMessage)
 	return port, agyBin, apiKey, model, systemPrompt, timeoutMinutes, mcpConfig
 }
 
-func handlePrompt(agyBin, apiKey, model, systemPrompt string, timeoutMinutes int, mcpConfig json.RawMessage) http.HandlerFunc {
+func handlePrompt(db *sql.DB, agyBin, apiKey, model, systemPrompt string, timeoutMinutes int, mcpConfig json.RawMessage) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, `{"error":"Method not allowed"}`, http.StatusMethodNotAllowed)
@@ -302,14 +417,18 @@ func handlePrompt(agyBin, apiKey, model, systemPrompt string, timeoutMinutes int
 			return
 		}
 
-		convID := strings.TrimSpace(req.ConversationID)
-		if convID == "" {
-			convID = uuid.New().String()
+		externalConvID := strings.TrimSpace(req.ConversationID)
+		if externalConvID == "" {
+			externalConvID = uuid.New().String()
 		}
 
+		internalConvID, _ := getInternalConversationID(db, externalConvID)
+
 		// Spawn headless Antigravity CLI in a background goroutine with bounded execution timeout
-		go func(prompt, convID string) {
-			log.Printf("Starting background execution for prompt: %q (conversation: %s, timeout: %d minutes)", prompt, convID, timeoutMinutes)
+		go func(prompt, extID, intID string) {
+			startTime := time.Now().Add(-2 * time.Second)
+			log.Printf("Starting background execution for prompt: %q (external_conversation: %s, mapped_internal: %q, timeout: %d minutes)",
+				prompt, extID, intID, timeoutMinutes)
 
 			ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutMinutes)*time.Minute)
 			defer cancel()
@@ -321,7 +440,10 @@ func handlePrompt(agyBin, apiKey, model, systemPrompt string, timeoutMinutes int
 			if timeoutMinutes > 0 {
 				args = append(args, "--print-timeout", fmt.Sprintf("%dm", timeoutMinutes))
 			}
-			args = append(args, "--conversation", convID, "-p", prompt)
+			if intID != "" {
+				args = append(args, "--conversation", intID)
+			}
+			args = append(args, "-p", prompt)
 
 			cmd := exec.CommandContext(ctx, agyBin, args...)
 			cmd.Dir = "/app"
@@ -347,7 +469,25 @@ func handlePrompt(agyBin, apiKey, model, systemPrompt string, timeoutMinutes int
 				}
 			}
 
-			outText, errDetail := extractResponseAndError(convID)
+			stderrStr := stderr.String()
+			activeInternalID := intID
+			if activeInternalID == "" {
+				re := regexp.MustCompile(`Starting conversation update stream for ([a-f0-9\-]+)`)
+				if match := re.FindStringSubmatch(stderrStr); len(match) > 1 {
+					activeInternalID = match[1]
+				} else {
+					activeInternalID = findLatestSessionDir(startTime)
+				}
+				if activeInternalID != "" {
+					_ = saveConversationMapping(db, extID, activeInternalID)
+				}
+			}
+
+			lookupID := activeInternalID
+			if lookupID == "" {
+				lookupID = extID
+			}
+			outText, errDetail := extractResponseAndError(lookupID)
 			if outText == "" {
 				outText = strings.TrimSpace(stdout.String())
 			}
@@ -357,106 +497,112 @@ func handlePrompt(agyBin, apiKey, model, systemPrompt string, timeoutMinutes int
 				logDetails = fmt.Sprintf("\n--- ERROR DETAILS ---\n%s", errDetail)
 			}
 
-			log.Printf("Execution finished | conversation=%s exit_code=%d\n--- STDOUT / RESPONSE ---\n%s\n--- STDERR ---\n%s%s",
-				convID, exitCode, outText, stderr.String(), logDetails)
-		}(req.Prompt, convID)
+			log.Printf("Execution finished | external_conv=%s internal_conv=%s exit_code=%d\n--- STDOUT / RESPONSE ---\n%s\n--- STDERR ---\n%s%s",
+				extID, activeInternalID, exitCode, outText, stderrStr, logDetails)
+		}(req.Prompt, externalConvID, internalConvID)
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusAccepted)
 		_ = json.NewEncoder(w).Encode(map[string]string{
 			"status":          "accepted",
-			"conversation_id": convID,
+			"conversation_id": externalConvID,
 			"message":         "Prompt execution started in background",
 		})
 	}
 }
 
-func handleTranscripts(w http.ResponseWriter, r *http.Request) {
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		homeDir = "/root"
-	}
-
-	type TranscriptEntry struct {
-		Path       string `json:"path"`
-		ModTime    string `json:"mod_time"`
-		TotalSteps int    `json:"total_steps"`
-		LastStatus string `json:"last_status"`
-		LastError  string `json:"last_error,omitempty"`
-		RawJSONL   string `json:"raw_jsonl,omitempty"`
-	}
-
-	var results []TranscriptEntry
-	roots := []string{
-		filepath.Join("/data", "brain"),
-		filepath.Join(homeDir, ".gemini", "antigravity-cli", "brain"),
-		filepath.Join(homeDir, ".gemini", "antigravity", "brain"),
-	}
-
-	seen := make(map[string]bool)
-	for _, root := range roots {
-		entries, err := os.ReadDir(root)
+func handleTranscripts(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		homeDir, err := os.UserHomeDir()
 		if err != nil {
-			continue
+			homeDir = "/root"
 		}
-		for _, entry := range entries {
-			if !entry.IsDir() {
-				continue
-			}
-			convDir := entry.Name()
-			if seen[convDir] {
-				continue
-			}
-			seen[convDir] = true
 
-			tPath := filepath.Join(root, convDir, ".system_generated", "logs", "transcript_full.jsonl")
-			data, err := os.ReadFile(tPath)
+		type TranscriptEntry struct {
+			Path       string `json:"path"`
+			ModTime    string `json:"mod_time"`
+			TotalSteps int    `json:"total_steps"`
+			LastStatus string `json:"last_status"`
+			LastError  string `json:"last_error,omitempty"`
+			ExternalID string `json:"external_id,omitempty"`
+			RawJSONL   string `json:"raw_jsonl,omitempty"`
+		}
+
+		var results []TranscriptEntry
+		roots := []string{
+			filepath.Join("/data", "brain"),
+			filepath.Join(homeDir, ".gemini", "antigravity-cli", "brain"),
+			filepath.Join(homeDir, ".gemini", "antigravity", "brain"),
+		}
+
+		seen := make(map[string]bool)
+		for _, root := range roots {
+			entries, err := os.ReadDir(root)
 			if err != nil {
-				tPath = filepath.Join(root, convDir, ".system_generated", "logs", "transcript.jsonl")
-				data, err = os.ReadFile(tPath)
+				continue
+			}
+			for _, entry := range entries {
+				if !entry.IsDir() {
+					continue
+				}
+				convDir := entry.Name()
+				if seen[convDir] {
+					continue
+				}
+				seen[convDir] = true
+
+				tPath := filepath.Join(root, convDir, ".system_generated", "logs", "transcript_full.jsonl")
+				data, err := os.ReadFile(tPath)
 				if err != nil {
-					continue
-				}
-			}
-
-			info, _ := os.Stat(tPath)
-			modTime := ""
-			if info != nil {
-				modTime = info.ModTime().Format(time.RFC3339)
-			}
-
-			te := TranscriptEntry{
-				Path:     tPath,
-				ModTime:  modTime,
-				RawJSONL: string(data),
-			}
-
-			lines := strings.Split(string(data), "\n")
-			for _, line := range lines {
-				line = strings.TrimSpace(line)
-				if line == "" {
-					continue
-				}
-				var m struct {
-					Status string          `json:"status"`
-					Error  json.RawMessage `json:"error"`
-				}
-				if err := json.Unmarshal([]byte(line), &m); err == nil {
-					te.TotalSteps++
-					if m.Status != "" {
-						te.LastStatus = m.Status
-					}
-					if len(m.Error) > 0 && string(m.Error) != "null" {
-						te.LastError = string(m.Error)
+					tPath = filepath.Join(root, convDir, ".system_generated", "logs", "transcript.jsonl")
+					data, err = os.ReadFile(tPath)
+					if err != nil {
+						continue
 					}
 				}
+
+				info, _ := os.Stat(tPath)
+				modTime := ""
+				if info != nil {
+					modTime = info.ModTime().Format(time.RFC3339)
+				}
+
+				extID, _ := getExternalConversationID(db, convDir)
+
+				te := TranscriptEntry{
+					Path:       tPath,
+					ModTime:    modTime,
+					ExternalID: extID,
+					RawJSONL:   string(data),
+				}
+
+				lines := strings.Split(string(data), "\n")
+				for _, line := range lines {
+					line = strings.TrimSpace(line)
+					if line == "" {
+						continue
+					}
+					var m struct {
+						Status string          `json:"status"`
+						Error  json.RawMessage `json:"error"`
+					}
+					if err := json.Unmarshal([]byte(line), &m); err == nil {
+						te.TotalSteps++
+						if m.Status != "" {
+							te.LastStatus = m.Status
+						}
+						if len(m.Error) > 0 && string(m.Error) != "null" {
+							te.LastError = string(m.Error)
+						}
+					}
+				}
+				results = append(results, te)
 			}
-			results = append(results, te)
 		}
-	}
 
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(results)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(results)
+	}
 }
 
 func handleHealth(w http.ResponseWriter, r *http.Request) {
@@ -468,14 +614,23 @@ func handleHealth(w http.ResponseWriter, r *http.Request) {
 func main() {
 	port, agyBin, apiKey, model, systemPrompt, timeoutMinutes, mcpConfig := loadConfig()
 
+	dbPath := getDBPath()
+	db, err := initDB(dbPath)
+	if err != nil {
+		log.Printf("Warning: failed to initialize SQLite DB at %s: %v", dbPath, err)
+	} else {
+		defer db.Close()
+	}
+
 	mux := http.NewServeMux()
-	promptHandler := handlePrompt(agyBin, apiKey, model, systemPrompt, timeoutMinutes, mcpConfig)
+	promptHandler := handlePrompt(db, agyBin, apiKey, model, systemPrompt, timeoutMinutes, mcpConfig)
+	transcriptHandler := handleTranscripts(db)
 
 	mux.HandleFunc("POST /", promptHandler)
 	mux.HandleFunc("POST /prompt", promptHandler)
 	mux.HandleFunc("POST /api/prompt", promptHandler)
-	mux.HandleFunc("GET /transcripts", handleTranscripts)
-	mux.HandleFunc("GET /api/transcripts", handleTranscripts)
+	mux.HandleFunc("GET /transcripts", transcriptHandler)
+	mux.HandleFunc("GET /api/transcripts", transcriptHandler)
 	mux.HandleFunc("GET /health", handleHealth)
 	mux.HandleFunc("GET /api/health", handleHealth)
 
@@ -488,8 +643,8 @@ func main() {
 	if len(mcpConfig) > 0 {
 		mcpStatus = "custom MCP config loaded"
 	}
-	log.Printf("Gundam Brain server listening on %s (agy binary: %s, model: %s, timeout: %dm, auth: %s, mcp: %s)",
-		addr, agyBin, model, timeoutMinutes, authStatus, mcpStatus)
+	log.Printf("Gundam Brain server listening on %s (agy binary: %s, model: %s, timeout: %dm, auth: %s, mcp: %s, db: %s)",
+		addr, agyBin, model, timeoutMinutes, authStatus, mcpStatus, dbPath)
 	if err := http.ListenAndServe(addr, mux); err != nil {
 		log.Fatalf("Server error: %v", err)
 	}

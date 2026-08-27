@@ -1,5 +1,5 @@
 name: "Gundam Brain"
-version: "1.3.9"
+version: "1.4.0"
 slug: "gundam_brain"
 description: "Headless Antigravity agent server connecting to remote network MCP endpoints"
 url: "https://github.com/azylman/gundam-brain"
