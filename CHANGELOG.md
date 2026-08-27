@@ -1,7 +1,10 @@
 # Changelog
 
+## 1.1.7
+- Use exact model identifier `Gemini 3.7 Flash (High)` for Antigravity CLI.
+
 ## 1.1.6
-- Add `model` option (default `gemini-2.5-flash`) passed to `--model` flag and `settings.json`.
+- Add `model` option passed to `--model` flag and `settings.json`.
 - Set only `GEMINI_API_KEY` to avoid multi-key collision warnings.
 
 ## 1.1.5

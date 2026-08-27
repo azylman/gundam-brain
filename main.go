@@ -63,7 +63,7 @@ func loadConfig() (string, string, string, string) {
 	port := getEnv("PORT", "8080")
 	agyBin := getEnv("AGY_BIN", "agy")
 	apiKey := getEnv("GEMINI_API_KEY", getEnv("ANTIGRAVITY_API_KEY", ""))
-	model := getEnv("AGY_MODEL", "gemini-2.5-flash")
+	model := getEnv("AGY_MODEL", "Gemini 3.7 Flash (High)")
 
 	// Read Home Assistant add-on options if available
 	if data, err := os.ReadFile("/data/options.json"); err == nil {
