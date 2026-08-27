@@ -44,10 +44,14 @@ func ensureAgySettings(apiKey string) {
 	settingsPath := filepath.Join(configDir, "settings.json")
 	settings := map[string]interface{}{
 		"modelProvider": "gemini",
+		"model":         "gemini-2.5-flash",
 	}
 	if data, err := os.ReadFile(settingsPath); err == nil {
 		_ = json.Unmarshal(data, &settings)
 		settings["modelProvider"] = "gemini"
+		if _, ok := settings["model"]; !ok {
+			settings["model"] = "gemini-2.5-flash"
+		}
 	}
 	if out, err := json.MarshalIndent(settings, "", "  "); err == nil {
 		_ = os.WriteFile(settingsPath, out, 0644)

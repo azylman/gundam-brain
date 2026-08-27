@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.1.4
+- Default model to `gemini-2.5-flash` when configuring Gemini API provider in `settings.json`.
+
 ## 1.1.3
 - Auto-provision `modelProvider: gemini` in `~/.gemini/antigravity-cli/settings.json` when `api_key` is provided.
 - Dynamic runtime injection of `GEMINI_API_KEY`, `ANTIGRAVITY_API_KEY`, and `GOOGLE_API_KEY`.

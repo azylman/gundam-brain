@@ -1,7 +1,7 @@
 name: "Gundam Brain"
 slug: "gundam_brain"
 description: "Home Assistant add-on running a Go server to execute headless Antigravity CLI prompts"
-version: "1.1.3"
+version: "1.1.4"
 startup: "application"
 boot: "auto"
 arch:
