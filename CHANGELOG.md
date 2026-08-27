@@ -1,7 +1,11 @@
 # Changelog
 
+## 1.1.3
+- Auto-provision `modelProvider: gemini` in `~/.gemini/antigravity-cli/settings.json` when `api_key` is provided.
+- Dynamic runtime injection of `GEMINI_API_KEY`, `ANTIGRAVITY_API_KEY`, and `GOOGLE_API_KEY`.
+
 ## 1.1.2
-- Support optional `api_key` in Home Assistant add-on options (`GEMINI_API_KEY` / `ANTIGRAVITY_API_KEY`).
+- Support optional `api_key` in Home Assistant add-on options.
 - Provide non-blocking empty stdin to background `agy` process to prevent terminal hangs.
 
 ## 1.1.1

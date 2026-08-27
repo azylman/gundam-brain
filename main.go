@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 )
 
@@ -27,6 +28,30 @@ func getEnv(key, defaultVal string) string {
 		return val
 	}
 	return defaultVal
+}
+
+func ensureAgySettings(apiKey string) {
+	if apiKey == "" {
+		return
+	}
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		homeDir = "/root"
+	}
+	configDir := filepath.Join(homeDir, ".gemini", "antigravity-cli")
+	_ = os.MkdirAll(configDir, 0755)
+
+	settingsPath := filepath.Join(configDir, "settings.json")
+	settings := map[string]interface{}{
+		"modelProvider": "gemini",
+	}
+	if data, err := os.ReadFile(settingsPath); err == nil {
+		_ = json.Unmarshal(data, &settings)
+		settings["modelProvider"] = "gemini"
+	}
+	if out, err := json.MarshalIndent(settings, "", "  "); err == nil {
+		_ = os.WriteFile(settingsPath, out, 0644)
+	}
 }
 
 func loadConfig() (string, string, string) {
@@ -48,6 +73,10 @@ func loadConfig() (string, string, string) {
 				apiKey = opts.ApiKey
 			}
 		}
+	}
+
+	if apiKey != "" {
+		ensureAgySettings(apiKey)
 	}
 
 	return port, agyBin, apiKey
@@ -80,12 +109,15 @@ func handlePrompt(agyBin, apiKey string) http.HandlerFunc {
 		// Spawn headless Antigravity CLI in a background goroutine
 		go func(prompt string) {
 			log.Printf("Starting background execution for prompt: %q", prompt)
+			ensureAgySettings(apiKey)
+
 			cmd := exec.Command(agyBin, "--dangerously-skip-permissions", "-p", prompt)
 			cmd.Stdin = strings.NewReader("")
 			if apiKey != "" {
 				cmd.Env = append(os.Environ(),
 					"GEMINI_API_KEY="+apiKey,
 					"ANTIGRAVITY_API_KEY="+apiKey,
+					"GOOGLE_API_KEY="+apiKey,
 				)
 			}
 
@@ -136,7 +168,11 @@ func main() {
 	mux.HandleFunc("GET /api/health", handleHealth)
 
 	addr := ":" + port
-	log.Printf("Gundam Brain server listening on %s (agy binary: %s)", addr, agyBin)
+	authStatus := "no API key configured"
+	if apiKey != "" {
+		authStatus = "Gemini API key configured"
+	}
+	log.Printf("Gundam Brain server listening on %s (agy binary: %s, auth: %s)", addr, agyBin, authStatus)
 	if err := http.ListenAndServe(addr, mux); err != nil {
 		log.Fatalf("Server error: %v", err)
 	}
