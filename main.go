@@ -291,14 +291,6 @@ func handlePrompt(agyBin, apiKey, model, systemPrompt string, timeoutMinutes int
 		// Spawn headless Antigravity CLI in a background goroutine with bounded execution timeout
 		go func(prompt string) {
 			log.Printf("Starting background execution for prompt: %q (timeout: %d minutes)", prompt, timeoutMinutes)
-			ensureAgySettings(apiKey, model)
-			ensureSystemRules(systemPrompt)
-			if len(mcpConfig) > 0 {
-				ensureMcpConfig(mcpConfig)
-			}
-
-			logFile := "/tmp/agy.log"
-			_ = os.Remove(logFile)
 
 			ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutMinutes)*time.Minute)
 			defer cancel()
@@ -307,7 +299,7 @@ func handlePrompt(agyBin, apiKey, model, systemPrompt string, timeoutMinutes int
 			if model != "" {
 				args = append(args, "--model", model)
 			}
-			args = append(args, "--log-file", logFile, "-p", prompt)
+			args = append(args, "-p", prompt)
 
 			cmd := exec.CommandContext(ctx, agyBin, args...)
 			cmd.Dir = "/app"
@@ -340,13 +332,8 @@ func handlePrompt(agyBin, apiKey, model, systemPrompt string, timeoutMinutes int
 				}
 			}
 
-			logDetails := ""
-			if logData, err := os.ReadFile(logFile); err == nil && len(logData) > 0 {
-				logDetails = fmt.Sprintf("\n--- LOG FILE (%s) ---\n%s", logFile, string(logData))
-			}
-
-			log.Printf("Execution finished | exit_code=%d\n--- STDOUT / RESPONSE ---\n%s\n--- STDERR ---\n%s%s",
-				exitCode, outText, stderr.String(), logDetails)
+			log.Printf("Execution finished | exit_code=%d\n--- STDOUT / RESPONSE ---\n%s\n--- STDERR ---\n%s",
+				exitCode, outText, stderr.String())
 		}(req.Prompt)
 
 		w.Header().Set("Content-Type", "application/json")

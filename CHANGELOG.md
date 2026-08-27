@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.3.5
+- Removed redundant per-prompt disk file writes in HTTP handler; configuration files are written once on server startup.
+- Streamlined `agy` execution logging directly via stdout/stderr.
+
 ## 1.3.4
 - Added configurable `timeout_minutes` option with a default of 15 minutes for long-running agent tasks and multi-turn MCP operations.
 
