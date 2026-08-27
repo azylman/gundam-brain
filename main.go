@@ -20,11 +20,12 @@ type PromptRequest struct {
 }
 
 type Options struct {
-	Port      int             `json:"port"`
-	AgyBin    string          `json:"agy_bin"`
-	ApiKey    string          `json:"api_key"`
-	Model     string          `json:"model"`
-	McpConfig json.RawMessage `json:"mcp_config"`
+	Port         int             `json:"port"`
+	AgyBin       string          `json:"agy_bin"`
+	ApiKey       string          `json:"api_key"`
+	Model        string          `json:"model"`
+	SystemPrompt string          `json:"system_prompt"`
+	McpConfig    json.RawMessage `json:"mcp_config"`
 }
 
 func getEnv(key, defaultVal string) string {
@@ -60,6 +61,38 @@ func ensureAgySettings(apiKey, model string) {
 	if out, err := json.MarshalIndent(settings, "", "  "); err == nil {
 		_ = os.WriteFile(settingsPath, out, 0644)
 	}
+}
+
+func ensureSystemRules(customPrompt string) {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		homeDir = "/root"
+	}
+	rulesDir := filepath.Join(homeDir, ".gemini", "rules")
+	_ = os.MkdirAll(rulesDir, 0755)
+
+	defaultRules := `# Core Agent Guidelines
+
+## 1. Tool-First Execution
+Always inspect your available tools (such as Home Assistant MCP, GitHub MCP, Discord MCP, etc.) before responding.
+When a user asks you to check status, modify configuration, change code, create pull requests, update settings, or interact with external services, ALWAYS invoke the appropriate tools to perform the concrete action rather than just conversationally acknowledging it.
+
+## 2. Action Grounding
+Never claim an action has been done or will be done without making the corresponding tool call.
+
+## 3. Communication & Reporting
+When responding to messages from external platforms (such as Discord), execute all necessary tools to fulfill the requested task first, then use the platform's communication tool (e.g. Discord send_message or thread reply) to report the outcome and actions taken back to the user.
+`
+	if strings.TrimSpace(customPrompt) != "" {
+		defaultRules += "\n## Additional Instructions\n" + strings.TrimSpace(customPrompt) + "\n"
+	}
+
+	ruleFile := filepath.Join(rulesDir, "agent_core.md")
+	_ = os.WriteFile(ruleFile, []byte(defaultRules), 0644)
+
+	// Also write to /app/GEMINI.md
+	_ = os.WriteFile("/app/GEMINI.md", []byte(defaultRules), 0644)
+	log.Printf("Configured agent system rules in %s and /app/GEMINI.md", ruleFile)
 }
 
 func ensureMcpConfig(rawConfig json.RawMessage) {
@@ -107,7 +140,6 @@ func extractResponse(stderrStr string) string {
 		homeDir = "/root"
 	}
 
-	// Try extracting exact conversation ID from stderr
 	var targetDirs []string
 	re := regexp.MustCompile(`Starting conversation update stream for ([a-f0-9\-]+)`)
 	if match := re.FindStringSubmatch(stderrStr); len(match) > 1 {
@@ -118,7 +150,6 @@ func extractResponse(stderrStr string) string {
 		)
 	}
 
-	// Fallback to finding latest directory in brain folders
 	brainRoots := []string{
 		filepath.Join(homeDir, ".gemini", "antigravity-cli", "brain"),
 		filepath.Join(homeDir, ".gemini", "antigravity", "brain"),
@@ -142,7 +173,6 @@ func extractResponse(stderrStr string) string {
 	}
 
 	for _, dir := range targetDirs {
-		// Try transcript_full.jsonl first, then transcript.jsonl
 		for _, name := range []string{"transcript_full.jsonl", "transcript.jsonl"} {
 			tPath := filepath.Join(dir, ".system_generated", "logs", name)
 			data, err := os.ReadFile(tPath)
@@ -178,11 +208,12 @@ func extractResponse(stderrStr string) string {
 	return ""
 }
 
-func loadConfig() (string, string, string, string, json.RawMessage) {
+func loadConfig() (string, string, string, string, string, json.RawMessage) {
 	port := getEnv("PORT", "8080")
 	agyBin := getEnv("AGY_BIN", "agy")
 	apiKey := getEnv("GEMINI_API_KEY", getEnv("ANTIGRAVITY_API_KEY", ""))
 	model := getEnv("AGY_MODEL", "Gemini 3.7 Flash (High)")
+	systemPrompt := getEnv("SYSTEM_PROMPT", "")
 	var mcpConfig json.RawMessage
 
 	// Read Home Assistant add-on options if available
@@ -201,6 +232,9 @@ func loadConfig() (string, string, string, string, json.RawMessage) {
 			if strings.TrimSpace(opts.Model) != "" {
 				model = opts.Model
 			}
+			if strings.TrimSpace(opts.SystemPrompt) != "" {
+				systemPrompt = opts.SystemPrompt
+			}
 			if len(opts.McpConfig) > 0 {
 				mcpConfig = opts.McpConfig
 			}
@@ -210,14 +244,15 @@ func loadConfig() (string, string, string, string, json.RawMessage) {
 	if apiKey != "" {
 		ensureAgySettings(apiKey, model)
 	}
+	ensureSystemRules(systemPrompt)
 	if len(mcpConfig) > 0 {
 		ensureMcpConfig(mcpConfig)
 	}
 
-	return port, agyBin, apiKey, model, mcpConfig
+	return port, agyBin, apiKey, model, systemPrompt, mcpConfig
 }
 
-func handlePrompt(agyBin, apiKey, model string, mcpConfig json.RawMessage) http.HandlerFunc {
+func handlePrompt(agyBin, apiKey, model, systemPrompt string, mcpConfig json.RawMessage) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, `{"error":"Method not allowed"}`, http.StatusMethodNotAllowed)
@@ -245,6 +280,7 @@ func handlePrompt(agyBin, apiKey, model string, mcpConfig json.RawMessage) http.
 		go func(prompt string) {
 			log.Printf("Starting background execution for prompt: %q", prompt)
 			ensureAgySettings(apiKey, model)
+			ensureSystemRules(systemPrompt)
 			if len(mcpConfig) > 0 {
 				ensureMcpConfig(mcpConfig)
 			}
@@ -259,6 +295,7 @@ func handlePrompt(agyBin, apiKey, model string, mcpConfig json.RawMessage) http.
 			args = append(args, "--log-file", logFile, "-p", prompt)
 
 			cmd := exec.Command(agyBin, args...)
+			cmd.Dir = "/app"
 			cmd.Stdin = strings.NewReader("")
 			if apiKey != "" {
 				cmd.Env = append(os.Environ(),
@@ -313,10 +350,10 @@ func handleHealth(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
-	port, agyBin, apiKey, model, mcpConfig := loadConfig()
+	port, agyBin, apiKey, model, systemPrompt, mcpConfig := loadConfig()
 
 	mux := http.NewServeMux()
-	promptHandler := handlePrompt(agyBin, apiKey, model, mcpConfig)
+	promptHandler := handlePrompt(agyBin, apiKey, model, systemPrompt, mcpConfig)
 
 	mux.HandleFunc("POST /", promptHandler)
 	mux.HandleFunc("POST /prompt", promptHandler)

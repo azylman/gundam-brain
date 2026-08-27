@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.3.0
+- Added built-in tool-first agent system rules (`~/.gemini/rules/agent_core.md` and `/app/GEMINI.md`) ensuring proactive tool invocation over conversational acknowledgement.
+- Added `system_prompt` add-on configuration option for custom behavioral guidelines.
+
 ## 1.2.2
 - Preinstall `@modelcontextprotocol/server-github`, `@pasympa/discord-mcp`, and `@iqai/mcp-discord` in container runtime for instant MCP initialization.
 
