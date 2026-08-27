@@ -4,7 +4,7 @@
 - **NEVER install MCP servers or packages inside the Dockerfile/image** (no `npm install -g @modelcontextprotocol/...`, `@pasympa/...`, pip packages, etc.).
 - Gundam Brain is strictly an agent execution runner. It connects to **remote network MCP endpoints only**.
 - All outbound MCP servers must be defined in `mcp_config` as remote URLs:
-  - **Discord**: Remote Home Assistant add-on (`http://ee843ef5-discord-mcp:8080/mcp`)
+  - **Discord**: Remote Home Assistant add-on (`http://192.168.1.14:8080/mcp`)
   - **GitHub**: Hosted remote endpoint (`https://api.githubcopilot.com/mcp/`)
   - **Home Assistant**: Remote webhook endpoint (`ha-mcp`)
 
