@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.3.1
+- Added execution context timeout (2 minutes) and process group cleanup to prevent background MCP child processes from blocking parent CLI termination.
+
 ## 1.3.0
 - Added built-in tool-first agent system rules (`~/.gemini/rules/agent_core.md` and `/app/GEMINI.md`) ensuring proactive tool invocation over conversational acknowledgement.
 - Added `system_prompt` add-on configuration option for custom behavioral guidelines.

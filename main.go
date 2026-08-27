@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -12,6 +13,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -276,7 +278,7 @@ func handlePrompt(agyBin, apiKey, model, systemPrompt string, mcpConfig json.Raw
 			return
 		}
 
-		// Spawn headless Antigravity CLI in a background goroutine
+		// Spawn headless Antigravity CLI in a background goroutine with bounded execution timeout
 		go func(prompt string) {
 			log.Printf("Starting background execution for prompt: %q", prompt)
 			ensureAgySettings(apiKey, model)
@@ -288,14 +290,18 @@ func handlePrompt(agyBin, apiKey, model, systemPrompt string, mcpConfig json.Raw
 			logFile := "/tmp/agy.log"
 			_ = os.Remove(logFile)
 
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+			defer cancel()
+
 			args := []string{"--dangerously-skip-permissions"}
 			if model != "" {
 				args = append(args, "--model", model)
 			}
 			args = append(args, "--log-file", logFile, "-p", prompt)
 
-			cmd := exec.Command(agyBin, args...)
+			cmd := exec.CommandContext(ctx, agyBin, args...)
 			cmd.Dir = "/app"
+			cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 			cmd.Stdin = strings.NewReader("")
 			if apiKey != "" {
 				cmd.Env = append(os.Environ(),
@@ -314,8 +320,13 @@ func handlePrompt(agyBin, apiKey, model, systemPrompt string, mcpConfig json.Raw
 					exitCode = exitErr.ExitCode()
 				} else {
 					exitCode = -1
-					log.Printf("Failed to spawn %s: %v", agyBin, err)
+					log.Printf("Process terminated: %v", err)
 				}
+			}
+
+			// Clean up any leaked child process groups on finish
+			if cmd.Process != nil {
+				_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 			}
 
 			outText := strings.TrimSpace(stdout.String())
