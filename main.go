@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -100,56 +101,77 @@ func ensureMcpConfig(rawConfig json.RawMessage) {
 	}
 }
 
-func extractLatestResponse() string {
+func extractResponse(stderrStr string) string {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		homeDir = "/root"
 	}
-	brainDir := filepath.Join(homeDir, ".gemini", "antigravity-cli", "brain")
-	entries, err := os.ReadDir(brainDir)
-	if err != nil {
-		return ""
+
+	// Try extracting exact conversation ID from stderr
+	var targetDirs []string
+	re := regexp.MustCompile(`Starting conversation update stream for ([a-f0-9\-]+)`)
+	if match := re.FindStringSubmatch(stderrStr); len(match) > 1 {
+		convID := match[1]
+		targetDirs = append(targetDirs,
+			filepath.Join(homeDir, ".gemini", "antigravity-cli", "brain", convID),
+			filepath.Join(homeDir, ".gemini", "antigravity", "brain", convID),
+		)
 	}
 
-	var latestDir string
-	var latestTime time.Time
-	for _, entry := range entries {
-		if entry.IsDir() {
-			info, err := entry.Info()
-			if err == nil && info.ModTime().After(latestTime) {
-				latestTime = info.ModTime()
-				latestDir = filepath.Join(brainDir, entry.Name())
+	// Fallback to finding latest directory in brain folders
+	brainRoots := []string{
+		filepath.Join(homeDir, ".gemini", "antigravity-cli", "brain"),
+		filepath.Join(homeDir, ".gemini", "antigravity", "brain"),
+	}
+	for _, root := range brainRoots {
+		if entries, err := os.ReadDir(root); err == nil {
+			var latestDir string
+			var latestTime time.Time
+			for _, entry := range entries {
+				if entry.IsDir() {
+					if info, err := entry.Info(); err == nil && info.ModTime().After(latestTime) {
+						latestTime = info.ModTime()
+						latestDir = filepath.Join(root, entry.Name())
+					}
+				}
+			}
+			if latestDir != "" {
+				targetDirs = append(targetDirs, latestDir)
 			}
 		}
 	}
 
-	if latestDir == "" {
-		return ""
-	}
+	for _, dir := range targetDirs {
+		// Try transcript_full.jsonl first, then transcript.jsonl
+		for _, name := range []string{"transcript_full.jsonl", "transcript.jsonl"} {
+			tPath := filepath.Join(dir, ".system_generated", "logs", name)
+			data, err := os.ReadFile(tPath)
+			if err != nil {
+				continue
+			}
 
-	transcriptPath := filepath.Join(latestDir, ".system_generated", "logs", "transcript.jsonl")
-	data, err := os.ReadFile(transcriptPath)
-	if err != nil {
-		transcriptPath = filepath.Join(latestDir, ".system_generated", "logs", "transcript_full.jsonl")
-		data, err = os.ReadFile(transcriptPath)
-		if err != nil {
-			return ""
-		}
-	}
-
-	lines := strings.Split(string(data), "\n")
-	for i := len(lines) - 1; i >= 0; i-- {
-		line := strings.TrimSpace(lines[i])
-		if line == "" {
-			continue
-		}
-		var step struct {
-			Type    string `json:"type"`
-			Content string `json:"content"`
-		}
-		if err := json.Unmarshal([]byte(line), &step); err == nil {
-			if step.Type == "PLANNER_RESPONSE" && strings.TrimSpace(step.Content) != "" {
-				return step.Content
+			lines := strings.Split(string(data), "\n")
+			for i := len(lines) - 1; i >= 0; i-- {
+				line := strings.TrimSpace(lines[i])
+				if line == "" {
+					continue
+				}
+				var step struct {
+					Type      string          `json:"type"`
+					Content   string          `json:"content"`
+					Thinking  string          `json:"thinking"`
+					ToolCalls json.RawMessage `json:"tool_calls"`
+				}
+				if err := json.Unmarshal([]byte(line), &step); err == nil {
+					if step.Type == "PLANNER_RESPONSE" {
+						if strings.TrimSpace(step.Content) != "" {
+							return step.Content
+						}
+						if len(step.ToolCalls) > 2 && string(step.ToolCalls) != "[]" && string(step.ToolCalls) != "null" {
+							return fmt.Sprintf("[Tool Call Requested]: %s", string(step.ToolCalls))
+						}
+					}
+				}
 			}
 		}
 	}
@@ -261,7 +283,7 @@ func handlePrompt(agyBin, apiKey, model string, mcpConfig json.RawMessage) http.
 
 			outText := strings.TrimSpace(stdout.String())
 			if outText == "" {
-				if resp := extractLatestResponse(); resp != "" {
+				if resp := extractResponse(stderr.String()); resp != "" {
 					outText = resp
 				}
 			}
