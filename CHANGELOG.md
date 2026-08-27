@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.2.0
+- Added `mcp_config` option supporting arbitrary Model Context Protocol (MCP) server definitions.
+- Automatically writes `/root/.gemini/config/mcp_config.json` on startup and execution.
+- Added `python3`, `pip`, `venv`, `nodejs`, and `npm` into the Docker base image for full MCP server runtime support.
+
 ## 1.1.8
 - Added transcript fallback parser to capture model responses even when `agy` non-TTY TUI output fails to flush to stdout.
 

@@ -1,7 +1,7 @@
 name: "Gundam Brain"
 slug: "gundam_brain"
 description: "Home Assistant add-on running a Go server to execute headless Antigravity CLI prompts"
-version: "1.1.8"
+version: "1.2.0"
 startup: "application"
 boot: "auto"
 arch:
@@ -19,8 +19,10 @@ options:
   agy_bin: "agy"
   api_key: ""
   model: "Gemini 3.7 Flash (High)"
+  mcp_config: ""
 schema:
   port: "port"
   agy_bin: "str?"
   api_key: "password?"
   model: "str?"
+  mcp_config: "str?"

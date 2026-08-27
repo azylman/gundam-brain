@@ -1,40 +1,35 @@
 # Gundam Brain
 
-Home Assistant add-on and Go server for triggering headless Antigravity CLI (`agy`) tasks.
+Home Assistant add-on running a Go server to execute headless Antigravity CLI (`agy`) agent prompts.
 
-## Overview
+## Features
+- **Prompt Execution API**: Exposes `POST /api/prompt` for background goroutine execution.
+- **Model Context Protocol (MCP) Support**: Supply standard `mcp_config` JSON to enable custom tools (e.g. Discord bot, Home Assistant, SQLite, etc.).
+- **Auto-Authentication**: Provide `api_key` in Home Assistant options to automatically configure Gemini API key auth.
+- **Pre-installed Environments**: Node.js, npm, Python 3, pip, git, and Antigravity CLI.
 
-Gundam Brain exposes a lightweight HTTP API designed for Home Assistant integration. When an endpoint receives a prompt, it immediately acknowledges the request and executes the prompt in a background goroutine using the Antigravity CLI (`agy --dangerously-skip-permissions -p "<prompt>"`).
+## Configuration Options
 
-Once execution finishes, it logs:
-- Process exit code
-- Standard output (`stdout`)
-- Standard error (`stderr`)
+| Option | Type | Description |
+| --- | --- | --- |
+| `port` | int | Container port (default `8080`). |
+| `agy_bin` | string | Antigravity CLI binary name or path (default `agy`). |
+| `api_key` | string (password) | Gemini API Key for model inference. |
+| `model` | string | Model identifier (default `Gemini 3.7 Flash (High)`). |
+| `mcp_config` | string | JSON string containing MCP server definitions (`mcpServers`). |
 
-## Repository Structure
+### Example `mcp_config` for Discord
 
-```
-.
-├── Dockerfile          # Multi-stage Docker build for Home Assistant
-├── build.yaml          # Home Assistant build architecture mapping
-├── config.yaml         # Home Assistant add-on manifest
-├── repository.yaml     # Home Assistant add-on repository manifest
-├── DOCS.md             # Detailed add-on documentation and setup
-├── CHANGELOG.md        # Add-on version history
-├── go.mod              # Go module definition
-└── main.go             # Single-file Go HTTP server & background runner
-```
-
-## Running Locally
-
-```bash
-go run main.go
-```
-
-Send a test request:
-
-```bash
-curl -X POST http://localhost:8080/api/prompt \
-  -H "Content-Type: application/json" \
-  -d '{"prompt": "Say hello from Gundam Brain"}'
+```json
+{
+  "mcpServers": {
+    "discord": {
+      "command": "python3",
+      "args": ["-c", "..."],
+      "env": {
+        "DISCORD_BOT_TOKEN": "your-token"
+      }
+    }
+  }
+}
 ```

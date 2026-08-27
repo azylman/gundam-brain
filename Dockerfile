@@ -1,34 +1,39 @@
+# --- Build stage --------------------------------------------------------
 FROM golang:1.22-alpine AS builder
 
 WORKDIR /build
+
 COPY go.mod ./
 COPY main.go ./
-RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o gundam-brain .
+RUN go mod tidy
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /gundam-brain .
 
+# --- Runtime stage -------------------------------------------------------
 FROM ubuntu:24.04
 
-ENV DEBIAN_FRONTEND=noninteractive
-ENV PATH="/usr/local/bin:${PATH}"
+# Install base utilities, certificates, and runtime interpreters for MCP servers (Node.js, Python)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    curl \
+    bash \
+    git \
+    jq \
+    tar \
+    gzip \
+    python3 \
+    python3-pip \
+    python3-venv \
+    nodejs \
+    npm \
+    && rm -rf /var/lib/apt/lists/*
 
-# Install system dependencies
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-        ca-certificates \
-        curl \
-        bash \
-        git \
-        jq \
-        tar \
-        gzip && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
-
-# Install Antigravity CLI (agy) directly into /usr/local/bin
+# Install official Antigravity CLI binary
 RUN curl -fsSL https://antigravity.google/cli/install.sh | bash -s -- -d /usr/local/bin
 
 WORKDIR /app
-COPY --from=builder /build/gundam-brain /app/gundam-brain
+
+COPY --from=builder /gundam-brain /usr/local/bin/gundam-brain
 
 EXPOSE 8080
 
-ENTRYPOINT ["/app/gundam-brain"]
+CMD ["/usr/local/bin/gundam-brain"]
