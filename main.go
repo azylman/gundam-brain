@@ -130,9 +130,37 @@ func extractResponseAndError(convID string) (string, string) {
 		homeDir = "/root"
 	}
 
-	targetDirs := []string{
-		filepath.Join(homeDir, ".gemini", "antigravity-cli", "brain", convID),
-		filepath.Join(homeDir, ".gemini", "antigravity", "brain", convID),
+	var targetDirs []string
+	if convID != "" {
+		targetDirs = append(targetDirs,
+			filepath.Join(homeDir, ".gemini", "antigravity-cli", "brain", convID),
+			filepath.Join(homeDir, ".gemini", "antigravity", "brain", convID),
+			filepath.Join("/data", "brain", convID),
+		)
+	}
+
+	brainRoots := []string{
+		filepath.Join(homeDir, ".gemini", "antigravity-cli", "brain"),
+		filepath.Join(homeDir, ".gemini", "antigravity", "brain"),
+		filepath.Join("/data", "brain"),
+	}
+
+	for _, root := range brainRoots {
+		if entries, err := os.ReadDir(root); err == nil {
+			var latestDir string
+			var latestTime time.Time
+			for _, entry := range entries {
+				if entry.IsDir() {
+					if info, err := entry.Info(); err == nil && info.ModTime().After(latestTime) {
+						latestTime = info.ModTime()
+						latestDir = filepath.Join(root, entry.Name())
+					}
+				}
+			}
+			if latestDir != "" {
+				targetDirs = append(targetDirs, latestDir)
+			}
+		}
 	}
 
 	var lastResponse string
@@ -233,6 +261,20 @@ func loadConfig() (string, string, string, string, string, int, json.RawMessage)
 		ensureMcpConfig(mcpConfig)
 	}
 
+	// Symlink brain directory to /data/brain if /data exists
+	if _, err := os.Stat("/data"); err == nil {
+		_ = os.MkdirAll("/data/brain", 0755)
+		homeDir, _ := os.UserHomeDir()
+		if homeDir == "" {
+			homeDir = "/root"
+		}
+		cliBrainDir := filepath.Join(homeDir, ".gemini", "antigravity-cli", "brain")
+		_ = os.MkdirAll(filepath.Dir(cliBrainDir), 0755)
+		if _, err := os.Lstat(cliBrainDir); err != nil {
+			_ = os.Symlink("/data/brain", cliBrainDir)
+		}
+	}
+
 	return port, agyBin, apiKey, model, systemPrompt, timeoutMinutes, mcpConfig
 }
 
@@ -275,6 +317,9 @@ func handlePrompt(agyBin, apiKey, model, systemPrompt string, timeoutMinutes int
 			args := []string{"--dangerously-skip-permissions"}
 			if model != "" {
 				args = append(args, "--model", model)
+			}
+			if timeoutMinutes > 0 {
+				args = append(args, "--print-timeout", fmt.Sprintf("%dm", timeoutMinutes))
 			}
 			args = append(args, "--conversation", convID, "-p", prompt)
 
@@ -326,6 +371,94 @@ func handlePrompt(agyBin, apiKey, model, systemPrompt string, timeoutMinutes int
 	}
 }
 
+func handleTranscripts(w http.ResponseWriter, r *http.Request) {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		homeDir = "/root"
+	}
+
+	type TranscriptEntry struct {
+		Path       string `json:"path"`
+		ModTime    string `json:"mod_time"`
+		TotalSteps int    `json:"total_steps"`
+		LastStatus string `json:"last_status"`
+		LastError  string `json:"last_error,omitempty"`
+		RawJSONL   string `json:"raw_jsonl,omitempty"`
+	}
+
+	var results []TranscriptEntry
+	roots := []string{
+		filepath.Join("/data", "brain"),
+		filepath.Join(homeDir, ".gemini", "antigravity-cli", "brain"),
+		filepath.Join(homeDir, ".gemini", "antigravity", "brain"),
+	}
+
+	seen := make(map[string]bool)
+	for _, root := range roots {
+		entries, err := os.ReadDir(root)
+		if err != nil {
+			continue
+		}
+		for _, entry := range entries {
+			if !entry.IsDir() {
+				continue
+			}
+			convDir := entry.Name()
+			if seen[convDir] {
+				continue
+			}
+			seen[convDir] = true
+
+			tPath := filepath.Join(root, convDir, ".system_generated", "logs", "transcript_full.jsonl")
+			data, err := os.ReadFile(tPath)
+			if err != nil {
+				tPath = filepath.Join(root, convDir, ".system_generated", "logs", "transcript.jsonl")
+				data, err = os.ReadFile(tPath)
+				if err != nil {
+					continue
+				}
+			}
+
+			info, _ := os.Stat(tPath)
+			modTime := ""
+			if info != nil {
+				modTime = info.ModTime().Format(time.RFC3339)
+			}
+
+			te := TranscriptEntry{
+				Path:     tPath,
+				ModTime:  modTime,
+				RawJSONL: string(data),
+			}
+
+			lines := strings.Split(string(data), "\n")
+			for _, line := range lines {
+				line = strings.TrimSpace(line)
+				if line == "" {
+					continue
+				}
+				var m struct {
+					Status string          `json:"status"`
+					Error  json.RawMessage `json:"error"`
+				}
+				if err := json.Unmarshal([]byte(line), &m); err == nil {
+					te.TotalSteps++
+					if m.Status != "" {
+						te.LastStatus = m.Status
+					}
+					if len(m.Error) > 0 && string(m.Error) != "null" {
+						te.LastError = string(m.Error)
+					}
+				}
+			}
+			results = append(results, te)
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(results)
+}
+
 func handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
@@ -341,6 +474,8 @@ func main() {
 	mux.HandleFunc("POST /", promptHandler)
 	mux.HandleFunc("POST /prompt", promptHandler)
 	mux.HandleFunc("POST /api/prompt", promptHandler)
+	mux.HandleFunc("GET /transcripts", handleTranscripts)
+	mux.HandleFunc("GET /api/transcripts", handleTranscripts)
 	mux.HandleFunc("GET /health", handleHealth)
 	mux.HandleFunc("GET /api/health", handleHealth)
 
