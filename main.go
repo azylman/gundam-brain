@@ -15,10 +15,13 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 type PromptRequest struct {
-	Prompt string `json:"prompt"`
+	Prompt         string `json:"prompt"`
+	ConversationID string `json:"conversation_id"`
 }
 
 type Options struct {
@@ -137,43 +140,19 @@ func ensureMcpConfig(rawConfig json.RawMessage) {
 	}
 }
 
-func extractResponse(stderrStr string) string {
+func extractResponseAndError(convID string) (string, string) {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		homeDir = "/root"
 	}
 
-	var targetDirs []string
-	re := regexp.MustCompile(`Starting conversation update stream for ([a-f0-9\-]+)`)
-	if match := re.FindStringSubmatch(stderrStr); len(match) > 1 {
-		convID := match[1]
-		targetDirs = append(targetDirs,
-			filepath.Join(homeDir, ".gemini", "antigravity-cli", "brain", convID),
-			filepath.Join(homeDir, ".gemini", "antigravity", "brain", convID),
-		)
+	targetDirs := []string{
+		filepath.Join(homeDir, ".gemini", "antigravity-cli", "brain", convID),
+		filepath.Join(homeDir, ".gemini", "antigravity", "brain", convID),
 	}
 
-	brainRoots := []string{
-		filepath.Join(homeDir, ".gemini", "antigravity-cli", "brain"),
-		filepath.Join(homeDir, ".gemini", "antigravity", "brain"),
-	}
-	for _, root := range brainRoots {
-		if entries, err := os.ReadDir(root); err == nil {
-			var latestDir string
-			var latestTime time.Time
-			for _, entry := range entries {
-				if entry.IsDir() {
-					if info, err := entry.Info(); err == nil && info.ModTime().After(latestTime) {
-						latestTime = info.ModTime()
-						latestDir = filepath.Join(root, entry.Name())
-					}
-				}
-			}
-			if latestDir != "" {
-				targetDirs = append(targetDirs, latestDir)
-			}
-		}
-	}
+	var lastResponse string
+	var lastError string
 
 	for _, dir := range targetDirs {
 		for _, name := range []string{"transcript_full.jsonl", "transcript.jsonl"} {
@@ -191,24 +170,33 @@ func extractResponse(stderrStr string) string {
 				}
 				var step struct {
 					Type      string          `json:"type"`
+					Status    string          `json:"status"`
+					Error     json.RawMessage `json:"error"`
 					Content   string          `json:"content"`
 					Thinking  string          `json:"thinking"`
 					ToolCalls json.RawMessage `json:"tool_calls"`
 				}
 				if err := json.Unmarshal([]byte(line), &step); err == nil {
-					if step.Type == "PLANNER_RESPONSE" {
-						if strings.TrimSpace(step.Content) != "" {
-							return step.Content
+					if (step.Status == "ERROR" || len(step.Error) > 0) && lastError == "" {
+						if errStr := strings.TrimSpace(string(step.Error)); errStr != "" && errStr != "null" {
+							lastError = errStr
 						}
-						if len(step.ToolCalls) > 2 && string(step.ToolCalls) != "[]" && string(step.ToolCalls) != "null" {
-							return fmt.Sprintf("[Tool Call Requested]: %s", string(step.ToolCalls))
+					}
+					if step.Type == "PLANNER_RESPONSE" && lastResponse == "" {
+						if strings.TrimSpace(step.Content) != "" {
+							lastResponse = step.Content
+						} else if len(step.ToolCalls) > 2 && string(step.ToolCalls) != "[]" && string(step.ToolCalls) != "null" {
+							lastResponse = fmt.Sprintf("[Tool Call Requested]: %s", string(step.ToolCalls))
 						}
 					}
 				}
 			}
+			if lastResponse != "" || lastError != "" {
+				return lastResponse, lastError
+			}
 		}
 	}
-	return ""
+	return lastResponse, lastError
 }
 
 func loadConfig() (string, string, string, string, string, int, json.RawMessage) {
@@ -288,9 +276,14 @@ func handlePrompt(agyBin, apiKey, model, systemPrompt string, timeoutMinutes int
 			return
 		}
 
+		convID := strings.TrimSpace(req.ConversationID)
+		if convID == "" {
+			convID = uuid.New().String()
+		}
+
 		// Spawn headless Antigravity CLI in a background goroutine with bounded execution timeout
-		go func(prompt string) {
-			log.Printf("Starting background execution for prompt: %q (timeout: %d minutes)", prompt, timeoutMinutes)
+		go func(prompt, convID string) {
+			log.Printf("Starting background execution for prompt: %q (conversation: %s, timeout: %d minutes)", prompt, convID, timeoutMinutes)
 
 			ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutMinutes)*time.Minute)
 			defer cancel()
@@ -299,7 +292,7 @@ func handlePrompt(agyBin, apiKey, model, systemPrompt string, timeoutMinutes int
 			if model != "" {
 				args = append(args, "--model", model)
 			}
-			args = append(args, "-p", prompt)
+			args = append(args, "--conversation-id", convID, "-p", prompt)
 
 			cmd := exec.CommandContext(ctx, agyBin, args...)
 			cmd.Dir = "/app"
@@ -325,22 +318,26 @@ func handlePrompt(agyBin, apiKey, model, systemPrompt string, timeoutMinutes int
 				}
 			}
 
-			outText := strings.TrimSpace(stdout.String())
+			outText, errDetail := extractResponseAndError(convID)
 			if outText == "" {
-				if resp := extractResponse(stderr.String()); resp != "" {
-					outText = resp
-				}
+				outText = strings.TrimSpace(stdout.String())
 			}
 
-			log.Printf("Execution finished | exit_code=%d\n--- STDOUT / RESPONSE ---\n%s\n--- STDERR ---\n%s",
-				exitCode, outText, stderr.String())
-		}(req.Prompt)
+			logDetails := ""
+			if errDetail != "" {
+				logDetails = fmt.Sprintf("\n--- ERROR DETAILS ---\n%s", errDetail)
+			}
+
+			log.Printf("Execution finished | conversation=%s exit_code=%d\n--- STDOUT / RESPONSE ---\n%s\n--- STDERR ---\n%s%s",
+				convID, exitCode, outText, stderr.String(), logDetails)
+		}(req.Prompt, convID)
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusAccepted)
 		_ = json.NewEncoder(w).Encode(map[string]string{
-			"status":  "accepted",
-			"message": "Prompt execution started in background",
+			"status":          "accepted",
+			"conversation_id": convID,
+			"message":         "Prompt execution started in background",
 		})
 	}
 }
