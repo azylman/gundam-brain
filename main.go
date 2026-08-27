@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 type PromptRequest struct {
@@ -57,6 +58,63 @@ func ensureAgySettings(apiKey, model string) {
 	if out, err := json.MarshalIndent(settings, "", "  "); err == nil {
 		_ = os.WriteFile(settingsPath, out, 0644)
 	}
+}
+
+func extractLatestResponse() string {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		homeDir = "/root"
+	}
+	brainDir := filepath.Join(homeDir, ".gemini", "antigravity-cli", "brain")
+	entries, err := os.ReadDir(brainDir)
+	if err != nil {
+		return ""
+	}
+
+	var latestDir string
+	var latestTime time.Time
+	for _, entry := range entries {
+		if entry.IsDir() {
+			info, err := entry.Info()
+			if err == nil && info.ModTime().After(latestTime) {
+				latestTime = info.ModTime()
+				latestDir = filepath.Join(brainDir, entry.Name())
+			}
+		}
+	}
+
+	if latestDir == "" {
+		return ""
+	}
+
+	transcriptPath := filepath.Join(latestDir, ".system_generated", "logs", "transcript.jsonl")
+	data, err := os.ReadFile(transcriptPath)
+	if err != nil {
+		// Also try transcript_full.jsonl
+		transcriptPath = filepath.Join(latestDir, ".system_generated", "logs", "transcript_full.jsonl")
+		data, err = os.ReadFile(transcriptPath)
+		if err != nil {
+			return ""
+		}
+	}
+
+	lines := strings.Split(string(data), "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		line := strings.TrimSpace(lines[i])
+		if line == "" {
+			continue
+		}
+		var step struct {
+			Type    string `json:"type"`
+			Content string `json:"content"`
+		}
+		if err := json.Unmarshal([]byte(line), &step); err == nil {
+			if step.Type == "PLANNER_RESPONSE" && strings.TrimSpace(step.Content) != "" {
+				return step.Content
+			}
+		}
+	}
+	return ""
 }
 
 func loadConfig() (string, string, string, string) {
@@ -152,13 +210,16 @@ func handlePrompt(agyBin, apiKey, model string) http.HandlerFunc {
 				}
 			}
 
-			logDetails := ""
-			if logData, err := os.ReadFile(logFile); err == nil && len(logData) > 0 {
-				logDetails = fmt.Sprintf("\n--- LOG FILE (%s) ---\n%s", logFile, string(logData))
+			outText := strings.TrimSpace(stdout.String())
+			if outText == "" {
+				// Fallback to transcript log if CLI TUI did not flush stdout
+				if resp := extractLatestResponse(); resp != "" {
+					outText = resp
+				}
 			}
 
-			log.Printf("Execution finished | exit_code=%d\n--- STDOUT ---\n%s\n--- STDERR ---\n%s%s",
-				exitCode, stdout.String(), stderr.String(), logDetails)
+			log.Printf("Execution finished | exit_code=%d\n--- STDOUT / RESPONSE ---\n%s\n--- STDERR ---\n%s",
+				exitCode, outText, stderr.String())
 		}(req.Prompt)
 
 		w.Header().Set("Content-Type", "application/json")

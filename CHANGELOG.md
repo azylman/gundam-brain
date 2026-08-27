@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.1.8
+- Added transcript fallback parser to capture model responses even when `agy` non-TTY TUI output fails to flush to stdout.
+
 ## 1.1.7
 - Use exact model identifier `Gemini 3.7 Flash (High)` for Antigravity CLI.
 
