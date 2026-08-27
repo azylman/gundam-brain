@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.3.2
+- Removed local MCP package preinstallations from Dockerfile; all MCP servers now operate as remote network endpoints.
+
 ## 1.3.1
 - Added execution context timeout (2 minutes) and process group cleanup to prevent background MCP child processes from blocking parent CLI termination.
 
