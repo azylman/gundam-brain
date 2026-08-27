@@ -276,7 +276,7 @@ func handlePrompt(agyBin, apiKey, model, systemPrompt string, timeoutMinutes int
 			if model != "" {
 				args = append(args, "--model", model)
 			}
-			args = append(args, "--conversation-id", convID, "-p", prompt)
+			args = append(args, "--conversation", convID, "-p", prompt)
 
 			cmd := exec.CommandContext(ctx, agyBin, args...)
 			cmd.Dir = "/app"
